@@ -10,6 +10,13 @@ Local sandbox for running [ComfyUI](https://github.com/comfyanonymous/ComfyUI) w
 ## Quick start
 
 ```bash
+# Check if nvidia-container-toolkit is installed
+make nv-check
+
+# If not installed, set it up (Ubuntu 22.04 x86_64)
+make nv-prepare
+sudo systemctl restart docker
+
 # Download models to basedir/models/
 make init
 
@@ -23,6 +30,8 @@ ComfyUI available at: http://localhost:8188
 
 | Command | Description |
 |---------|-------------|
+| `make nv-check` | Check if `nvidia-container-toolkit` is installed |
+| `make nv-prepare` | Install `nvidia-container-toolkit` and configure Docker runtime |
 | `make up` | Start the container |
 | `make down` | Stop the container |
 | `make logs` | Follow container logs |
