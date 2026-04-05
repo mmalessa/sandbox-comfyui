@@ -47,8 +47,3 @@ sh: ## Open a shell in the running container
 .PHONY: logs
 logs: ## View the logs of the docker containers
 	@$(DC) logs -f $(APP)
-
-.PHONY: init
-init:
-	chmod +x ./init-models.sh
-	./init-models.sh

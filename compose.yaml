@@ -12,10 +12,21 @@ services:
               count: all
               capabilities: [gpu]
 
+    ipc: host
+
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      stack:
+        soft: 67108864
+        hard: 67108864
+
     environment:
       - BASE_DIRECTORY=/basedir
       - WANTED_UID=1000
       - WANTED_GID=1000
+      - COMFYUI_ARGS=--fast --use-pytorch-cross-attention
 
     volumes:
       - ./run:/comfy/mnt

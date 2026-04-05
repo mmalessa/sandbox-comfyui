@@ -17,9 +17,6 @@ make nv-check
 make nv-prepare
 sudo systemctl restart docker
 
-# Download models to basedir/models/
-make init
-
 # Start the container
 make up
 ```
@@ -36,7 +33,6 @@ ComfyUI available at: http://localhost:8188
 | `make down` | Stop the container |
 | `make logs` | Follow container logs |
 | `make sh` | Open a shell in the container |
-| `make init` | Download models from HuggingFace |
 
 ## Structure
 
