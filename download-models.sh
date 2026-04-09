@@ -51,6 +51,36 @@ def parse_yaml(path):
 
 categories = parse_yaml(yaml_file)
 
+HEADERS = {"User-Agent": "Mozilla/5.0"}
+
+def remote_size(url):
+    """Return Content-Length from a HEAD request, or None if unavailable."""
+    req = urllib.request.Request(url, headers=HEADERS, method='HEAD')
+    try:
+        with urllib.request.urlopen(req) as r:
+            val = r.headers.get('Content-Length')
+            return int(val) if val else None
+    except Exception:
+        return None
+
+def download(url, target_path):
+    req = urllib.request.Request(url, headers=HEADERS)
+    with urllib.request.urlopen(req) as response, open(target_path, 'wb') as out:
+        total = int(response.headers.get('Content-Length', 0))
+        downloaded = 0
+        block = 1024 * 1024  # 1 MB
+        while True:
+            chunk = response.read(block)
+            if not chunk:
+                break
+            out.write(chunk)
+            downloaded += len(chunk)
+            if total:
+                pct = downloaded * 100 // total
+                print(f"\r   {pct}%  {downloaded // 1024 // 1024} / {total // 1024 // 1024} MB",
+                      end='', flush=True)
+    print()
+
 for category, urls in categories.items():
     if not urls:
         continue
@@ -61,30 +91,33 @@ for category, urls in categories.items():
         filename = os.path.basename(url.split('?')[0])
         target_path = os.path.join(target_dir, filename)
 
-        if os.path.isfile(target_path):
-            print(f"✔  {filename} already exists")
+        print(f"   {filename}", end='  ', flush=True)
+
+        try:
+            expected = remote_size(url)
+        except Exception as e:
+            print(f"\n✗  HEAD failed: {e}")
             continue
 
-        print(f"⬇  {filename}  →  {category}/")
+        if expected is None:
+            print("(unknown remote size)", end='  ')
+
+        local_size = os.path.getsize(target_path) if os.path.isfile(target_path) else None
+
+        if local_size is not None and (expected is None or local_size == expected):
+            print(f"✔  {local_size // 1024 // 1024} MB — up to date")
+            continue
+
+        if local_size is not None:
+            print(f"size mismatch (local {local_size // 1024 // 1024} MB / remote {expected // 1024 // 1024} MB) — re-downloading")
+        else:
+            size_str = f"{expected // 1024 // 1024} MB" if expected else "? MB"
+            print(f"⬇  {size_str}  →  {category}/")
+
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req) as response, open(target_path, 'wb') as out:
-                total = int(response.headers.get('Content-Length', 0))
-                downloaded = 0
-                block = 1024 * 1024  # 1 MB
-                while True:
-                    chunk = response.read(block)
-                    if not chunk:
-                        break
-                    out.write(chunk)
-                    downloaded += len(chunk)
-                    if total:
-                        pct = downloaded * 100 // total
-                        print(f"\r   {pct}% ({downloaded // 1024 // 1024} MB / {total // 1024 // 1024} MB)", end='', flush=True)
-            print()
+            download(url, target_path)
         except urllib.error.HTTPError as e:
             print(f"\n✗  HTTP {e.code} — {url}")
-            # remove partial file
             if os.path.exists(target_path):
                 os.remove(target_path)
         except Exception as e:
