@@ -4,16 +4,8 @@ services:
     container_name: comfyui
     ports:
       - "127.0.0.1:8188:8188"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-
+    gpus: all
     ipc: host
-
     ulimits:
       memlock:
         soft: -1
@@ -21,16 +13,17 @@ services:
       stack:
         soft: 67108864
         hard: 67108864
-
+    mem_limit: 16g
+    cpus: "4.0"
     environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - BASE_DIRECTORY=/basedir
       - WANTED_UID=1000
       - WANTED_GID=1000
       - COMFYUI_ARGS=--fast --use-pytorch-cross-attention
-
     volumes:
       - ./run:/comfy/mnt
       - ./basedir:/basedir
-
     restart: unless-stopped
     runtime: nvidia
