@@ -1,129 +1,121 @@
-#!/usr/bin/env bash
-# Downloads models listed in models.yaml into basedir/models/<category>/
+#!/bin/sh
+# Downloads models listed in models.json into basedir/models/<category>/
+# Only workflows marked with active: true are processed.
+# Requires: jq, curl
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-YAML_FILE="${1:-"$SCRIPT_DIR/models.yaml"}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+JSON_FILE="${1:-"$SCRIPT_DIR/models.json"}"
 BASE_DIR="$SCRIPT_DIR/basedir/models"
 
-if [[ ! -f "$YAML_FILE" ]]; then
-  echo "Error: $YAML_FILE not found"
+for cmd in jq curl; do
+  if ! command -v "$cmd" > /dev/null 2>&1; then
+    echo "Error: $cmd is required but not installed"
+    exit 1
+  fi
+done
+
+if [ ! -f "$JSON_FILE" ]; then
+  echo "Error: $JSON_FILE not found"
   exit 1
 fi
 
-# Parse YAML and download — requires python3
-python3 - "$YAML_FILE" "$BASE_DIR" <<'EOF'
-import sys
-import os
-import urllib.request
-import urllib.error
+# --- Orphan check (all workflows, regardless of active flag) ---
 
-yaml_file = sys.argv[1]
-base_dir  = sys.argv[2]
+expected=$(mktemp)
+orphans=$(mktemp)
+trap 'rm -f "$expected" "$orphans"' EXIT INT TERM
 
-# Minimal YAML parser: handles only the flat list-of-strings structure used here.
-def parse_yaml(path):
-    result = {}
-    current_key = None
-    with open(path) as f:
-        for raw in f:
-            line = raw.rstrip()
-            # skip comments and empty lines
-            stripped = line.lstrip()
-            if not stripped or stripped.startswith('#'):
-                continue
-            # top-level key
-            if not line.startswith(' ') and not line.startswith('\t') and line.endswith(':'):
-                current_key = line[:-1].strip()
-                result[current_key] = []
-            elif not line.startswith(' ') and not line.startswith('\t') and ': []' in line:
-                key = line.split(':')[0].strip()
-                result[key] = []
-                current_key = key
-            elif current_key is not None and stripped.startswith('- '):
-                url = stripped[2:].strip()
-                # ignore inline comments
-                url = url.split('  #')[0].strip()
-                if url:
-                    result[current_key].append(url)
-    return result
+jq -r '
+  to_entries[] | .value.models | to_entries[] |
+  . as {key: $cat, value: $urls} |
+  $urls[] |
+  $cat + "/" + (split("/") | last)
+' "$JSON_FILE" | sort -u > "$expected"
 
-categories = parse_yaml(yaml_file)
+if [ -d "$BASE_DIR" ]; then
+  for category_dir in "$BASE_DIR"/*/; do
+    [ -d "$category_dir" ] || continue
+    category=$(basename "$category_dir")
+    for filepath in "$category_dir"*.safetensors; do
+      [ -f "$filepath" ] || continue
+      key="$category/$(basename "$filepath")"
+      if ! grep -qxF "$key" "$expected"; then
+        echo "$filepath" >> "$orphans"
+      fi
+    done
+  done
+fi
 
-HEADERS = {"User-Agent": "Mozilla/5.0"}
+if [ -s "$orphans" ]; then
+  echo "⚠  Files not listed in $JSON_FILE:"
+  while read -r f; do
+    echo "   $(echo "$f" | sed "s|$BASE_DIR/||")"
+  done < "$orphans"
+  echo ""
+  printf "Remove these files? [y/N] "
+  read -r answer < /dev/tty
+  if [ "$answer" = "y" ]; then
+    while read -r f; do
+      rm "$f"
+      echo "   removed $(echo "$f" | sed "s|$BASE_DIR/||")"
+    done < "$orphans"
+    echo ""
+  else
+    echo "   Skipped."
+    echo ""
+  fi
+fi
 
-def remote_size(url):
-    """Return Content-Length from a HEAD request, or None if unavailable."""
-    req = urllib.request.Request(url, headers=HEADERS, method='HEAD')
-    try:
-        with urllib.request.urlopen(req) as r:
-            val = r.headers.get('Content-Length')
-            return int(val) if val else None
-    except Exception:
-        return None
+# --- Download active workflows ---
 
-def download(url, target_path):
-    req = urllib.request.Request(url, headers=HEADERS)
-    with urllib.request.urlopen(req) as response, open(target_path, 'wb') as out:
-        total = int(response.headers.get('Content-Length', 0))
-        downloaded = 0
-        block = 1024 * 1024  # 1 MB
-        while True:
-            chunk = response.read(block)
-            if not chunk:
-                break
-            out.write(chunk)
-            downloaded += len(chunk)
-            if total:
-                pct = downloaded * 100 // total
-                print(f"\r   {pct}%  {downloaded // 1024 // 1024} / {total // 1024 // 1024} MB",
-                      end='', flush=True)
-    print()
+jq -r 'to_entries[] | select(.value.active == true) | .key' "$JSON_FILE" | \
+while read -r workflow; do
+  echo ""
+  echo "▶  [$workflow]"
 
-for category, urls in categories.items():
-    if not urls:
+  jq -r --arg w "$workflow" '
+    .[$w].models | to_entries[] |
+    . as {key: $cat, value: $urls} |
+    $urls[] |
+    $cat + " " + .
+  ' "$JSON_FILE" | while read -r category url; do
+    filename=$(basename "$(echo "$url" | cut -d'?' -f1)")
+    target_dir="$BASE_DIR/$category"
+    target_path="$target_dir/$filename"
+
+    mkdir -p "$target_dir"
+
+    printf "   %s  " "$filename"
+
+    expected_size=$(curl -sIL "$url" | grep -i '^content-length:' | tail -1 | tr -d '\r' | awk '{print $2}')
+
+    if [ -f "$target_path" ]; then
+      local_size=$(stat -c%s "$target_path")
+      if [ -n "$expected_size" ] && [ "$local_size" = "$expected_size" ]; then
+        echo "✔  $((local_size / 1024 / 1024)) MB — up to date"
         continue
-    target_dir = os.path.join(base_dir, category)
-    os.makedirs(target_dir, exist_ok=True)
+      elif [ -z "$expected_size" ]; then
+        echo "✔  $((local_size / 1024 / 1024)) MB — up to date (unknown remote size)"
+        continue
+      else
+        echo "size mismatch (local $((local_size / 1024 / 1024)) MB / remote $((expected_size / 1024 / 1024)) MB) — re-downloading"
+      fi
+    else
+      if [ -n "$expected_size" ]; then
+        echo "⬇  $((expected_size / 1024 / 1024)) MB  →  $category/"
+      else
+        echo "⬇  ? MB  →  $category/"
+      fi
+    fi
 
-    for url in urls:
-        filename = os.path.basename(url.split('?')[0])
-        target_path = os.path.join(target_dir, filename)
+    if ! curl -L --progress-bar -o "$target_path" "$url"; then
+      echo "✗  download failed — $url"
+      rm -f "$target_path"
+    fi
+  done
+done
 
-        print(f"   {filename}", end='  ', flush=True)
-
-        try:
-            expected = remote_size(url)
-        except Exception as e:
-            print(f"\n✗  HEAD failed: {e}")
-            continue
-
-        if expected is None:
-            print("(unknown remote size)", end='  ')
-
-        local_size = os.path.getsize(target_path) if os.path.isfile(target_path) else None
-
-        if local_size is not None and (expected is None or local_size == expected):
-            print(f"✔  {local_size // 1024 // 1024} MB — up to date")
-            continue
-
-        if local_size is not None:
-            print(f"size mismatch (local {local_size // 1024 // 1024} MB / remote {expected // 1024 // 1024} MB) — re-downloading")
-        else:
-            size_str = f"{expected // 1024 // 1024} MB" if expected else "? MB"
-            print(f"⬇  {size_str}  →  {category}/")
-
-        try:
-            download(url, target_path)
-        except urllib.error.HTTPError as e:
-            print(f"\n✗  HTTP {e.code} — {url}")
-            if os.path.exists(target_path):
-                os.remove(target_path)
-        except Exception as e:
-            print(f"\n✗  {e} — {url}")
-            if os.path.exists(target_path):
-                os.remove(target_path)
-
-print("✅  Done")
-EOF
+echo ""
+echo "✅  Done"

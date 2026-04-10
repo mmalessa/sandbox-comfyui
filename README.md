@@ -36,34 +36,35 @@ ComfyUI available at: http://localhost:8188
 
 ## Models
 
-Models are defined in `models.yaml`, grouped by ComfyUI category:
+Models are defined in `models.json`, grouped by workflow and ComfyUI category:
 
-```yaml
-checkpoints:
-  - https://huggingface.co/...
-diffusion_models:
-  - ...
-text_encoders:
-  - ...
-vae:
-  - ...
-loras:
-  - ...
-upscale_models:
-  - ...
-clip_vision:
-  - ...
+```json
+{
+  "workflow_name": {
+    "active": true,
+    "models": {
+      "checkpoints": ["https://huggingface.co/..."],
+      "diffusion_models": ["..."],
+      "text_encoders": ["..."],
+      "vae": ["..."],
+      "loras": ["..."],
+      "upscale_models": ["..."]
+    }
+  }
+}
 ```
 
-Edit `models.yaml` manually to add or remove models, then run:
+Edit `models.json` manually to add or remove models, then run:
 
 ```bash
 ./download-models.sh
 # or with a custom file
-./download-models.sh /path/to/models.yaml
+./download-models.sh /path/to/models.json
 ```
 
 Files are downloaded to `basedir/models/<category>/`. Already-existing files are skipped.
+Workflows with `active: false` are skipped. On startup the script checks for files in
+`basedir/models/` that are not listed in `models.json` and offers to remove them.
 
 ## Structure
 
@@ -71,6 +72,6 @@ Files are downloaded to `basedir/models/<category>/`. Already-existing files are
 basedir/            # ComfyUI data (models, output, custom nodes)
 run/                # ComfyUI installation, venv, HF cache
 compose.yaml        # Docker Compose configuration
-models.yaml         # Model list (edit to add/remove models)
-download-models.sh  # Model download script
+models.json         # Model list grouped by workflow (edit to add/remove models)
+download-models.sh  # Model download script (requires jq, curl)
 ```
