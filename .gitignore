@@ -2,3 +2,4 @@
 run/*
 basedir/*
 !**/.gitkeep
+compose.override.yaml
