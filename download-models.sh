@@ -21,6 +21,15 @@ if [ ! -f "$JSON_FILE" ]; then
   exit 1
 fi
 
+if ! jq empty "$JSON_FILE" 2>/dev/null; then
+  echo "Error: $JSON_FILE contains invalid JSON — removing all models"
+  if [ -d "$BASE_DIR" ]; then
+    find "$BASE_DIR" -name "*.safetensors" -type f -delete
+    echo "   All .safetensors files removed from $BASE_DIR"
+  fi
+  exit 1
+fi
+
 # --- Orphan check (all workflows, regardless of active flag) ---
 
 expected=$(mktemp)
@@ -89,7 +98,21 @@ while read -r workflow; do
 
     printf "   %s  " "$filename"
 
-    expected_size=$(curl -sIL "$url" | grep -i '^content-length:' | tail -1 | tr -d '\r' | awk '{print $2}')
+    headers=$(curl -sIL "$url")
+    http_status=$(printf '%s' "$headers" | grep -i '^HTTP/' | tail -1 | awk '{print $2}')
+    expected_size=$(printf '%s' "$headers" | grep -i '^content-length:' | tail -1 | tr -d '\r' | awk '{print $2}')
+
+    case "$http_status" in
+      2*) ;;
+      *) echo "✗  HTTP ${http_status:-???} — file not available on server, skipping"; continue ;;
+    esac
+
+    # Minimum sane model size: 1 MB. Anything smaller is likely an error page.
+    min_size=1048576
+    if [ -n "$expected_size" ] && [ "$expected_size" -lt "$min_size" ] 2>/dev/null; then
+      echo "✗  server reports only ${expected_size} bytes — not a valid model file, skipping"
+      continue
+    fi
 
     if [ -f "$target_path" ]; then
       local_size=$(stat -c%s "$target_path")
@@ -112,6 +135,13 @@ while read -r workflow; do
 
     if ! curl -L --progress-bar -o "$target_path" "$url"; then
       echo "✗  download failed — $url"
+      rm -f "$target_path"
+      continue
+    fi
+
+    downloaded_size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
+    if [ "$downloaded_size" -lt "$min_size" ]; then
+      echo "✗  downloaded file too small (${downloaded_size} bytes) — not a valid model, removing"
       rm -f "$target_path"
     fi
   done

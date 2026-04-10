@@ -14,14 +14,15 @@ services:
         soft: 67108864
         hard: 67108864
     mem_limit: 16g
-    cpus: "4.0"
+    cpus: "8.0"
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - BASE_DIRECTORY=/basedir
       - WANTED_UID=1000
       - WANTED_GID=1000
-      - COMFYUI_ARGS=--fast --use-pytorch-cross-attention
+      - COMFYUI_ARGS=--fast --force-fp16 --use-pytorch-cross-attention --dont-print-server
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
     volumes:
       - ./run:/comfy/mnt
       - ./basedir:/basedir
