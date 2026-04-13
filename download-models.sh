@@ -30,53 +30,6 @@ if ! jq empty "$JSON_FILE" 2>/dev/null; then
   exit 1
 fi
 
-# --- Orphan check (all workflows, regardless of active flag) ---
-
-expected=$(mktemp)
-orphans=$(mktemp)
-trap 'rm -f "$expected" "$orphans"' EXIT INT TERM
-
-jq -r '
-  to_entries[] | .value.models | to_entries[] |
-  . as {key: $cat, value: $urls} |
-  $urls[] |
-  $cat + "/" + (split("/") | last)
-' "$JSON_FILE" | sort -u > "$expected"
-
-if [ -d "$BASE_DIR" ]; then
-  for category_dir in "$BASE_DIR"/*/; do
-    [ -d "$category_dir" ] || continue
-    category=$(basename "$category_dir")
-    for filepath in "$category_dir"*.safetensors; do
-      [ -f "$filepath" ] || continue
-      key="$category/$(basename "$filepath")"
-      if ! grep -qxF "$key" "$expected"; then
-        echo "$filepath" >> "$orphans"
-      fi
-    done
-  done
-fi
-
-if [ -s "$orphans" ]; then
-  echo "⚠  Files not listed in $JSON_FILE:"
-  while read -r f; do
-    echo "   $(echo "$f" | sed "s|$BASE_DIR/||")"
-  done < "$orphans"
-  echo ""
-  printf "Remove these files? [y/N] "
-  read -r answer < /dev/tty
-  if [ "$answer" = "y" ]; then
-    while read -r f; do
-      rm "$f"
-      echo "   removed $(echo "$f" | sed "s|$BASE_DIR/||")"
-    done < "$orphans"
-    echo ""
-  else
-    echo "   Skipped."
-    echo ""
-  fi
-fi
-
 # --- Download active workflows ---
 
 jq -r 'to_entries[] | select(.value.active == true) | .key' "$JSON_FILE" | \
@@ -148,4 +101,52 @@ while read -r workflow; do
 done
 
 echo ""
+
+# --- Orphan check (all workflows, regardless of active flag) ---
+
+expected=$(mktemp)
+orphans=$(mktemp)
+trap 'rm -f "$expected" "$orphans"' EXIT INT TERM
+
+jq -r '
+  to_entries[] | .value.models | to_entries[] |
+  . as {key: $cat, value: $urls} |
+  $urls[] |
+  $cat + "/" + (split("/") | last)
+' "$JSON_FILE" | sort -u > "$expected"
+
+if [ -d "$BASE_DIR" ]; then
+  for category_dir in "$BASE_DIR"/*/; do
+    [ -d "$category_dir" ] || continue
+    category=$(basename "$category_dir")
+    for filepath in "$category_dir"*.safetensors; do
+      [ -f "$filepath" ] || continue
+      key="$category/$(basename "$filepath")"
+      if ! grep -qxF "$key" "$expected"; then
+        echo "$filepath" >> "$orphans"
+      fi
+    done
+  done
+fi
+
+if [ -s "$orphans" ]; then
+  echo "⚠  Files not listed in $JSON_FILE:"
+  while read -r f; do
+    echo "   $(echo "$f" | sed "s|$BASE_DIR/||")"
+  done < "$orphans"
+  echo ""
+  printf "Remove these files? [y/N] "
+  read -r answer < /dev/tty
+  if [ "$answer" = "y" ]; then
+    while read -r f; do
+      rm "$f"
+      echo "   removed $(echo "$f" | sed "s|$BASE_DIR/||")"
+    done < "$orphans"
+    echo ""
+  else
+    echo "   Skipped."
+    echo ""
+  fi
+fi
+
 echo "✅  Done"
